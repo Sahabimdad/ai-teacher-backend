@@ -1,22 +1,26 @@
-import json
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
+import json
+from firebase_admin import credentials, initialize_app, get_app
+from firebase_admin import firestore
 
-# Check karein ke Render ka environment variable mojood hai ya nahi
+# Check karein ke Render ya environment variable mojood hai ya nahi
 firebase_config_str = os.environ.get('FIREBASE_CONFIG_JSON')
 
 if firebase_config_str:
-    # Agar cloud (Render) par hain toh variable se JSON load karein
+    # Agar cloud par hain toh variable se JSON load karein
     cred_dict = json.loads(firebase_config_str)
     cred = credentials.Certificate(cred_dict)
 else:
-    # Agar local laptop par hain toh file se load karein
-    cred = credentials.Certificate("serviceAccountKey.json")
+    # PythonAnywhere ke liye absolute path
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    key_path = os.path.join(base_dir, "serviceAccountKey.json")
+    cred = credentials.Certificate(key_path)
 
 # Firebase initialize karein (agar pehle se initialized nahi hai toh)
-if not firebase_admin._apps:
-    firebase_admin.initialize_app(cred)
+try:
+    app = get_app()
+except ValueError:
+    app = initialize_app(cred)
 
 db = firestore.client()
 
