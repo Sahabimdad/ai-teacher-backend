@@ -47,19 +47,7 @@ def student_query():
         def normalize(s):
             return str(s).lower().replace(" ", "").replace("_", "").replace("-", "")
 
-        # 1. Pehle check karein ke kya yeh koi Subject Code ho sakta hai?
-        if "-" in query_text or len(query_text) <= 8:
-            try:
-                result = analyze_class_performance(class_id, subject_id=query_text.upper())
-                if result and result.get("class_average") is not None:
-                    top_list = "\n".join([f"• {s}" for s in result.get("top_students_details", [])[:5]])
-                    return jsonify({
-                        "result": f"Analysis for Subject ({query_text.upper()}):\n• Class Average: {result.get('class_average')}%\nTop Students:\n{top_list}"
-                    }), 200
-            except Exception as sub_err:
-                print(f"Not a subject or analysis error: {sub_err}")
-
-        # 2. Agar subject nahi, toh students mein naam dhoondhein
+        # 1. Pehle Students mein naam dhoondhein
         users_ref = db.collection('users').get()
         matched_student = None
         student_id = None
@@ -74,50 +62,64 @@ def student_query():
                 student_id = doc.id
                 break
 
-        if not matched_student:
-            return jsonify({"result": f"Student or Subject '{query_text}' not found in class {class_id}."}), 200
+        # 2. Agar student mil jaye toh uska data calculate karein
+        if matched_student:
+            student_real_name = matched_student.get('name', 'Unknown')
+            MAX_TOTAL_MARKS = 40.0
+            percentage_list = []
 
-        # Student mil gaya, ab marks aur attendance calculate karein
-        student_real_name = matched_student.get('name', 'Unknown')
-        MAX_TOTAL_MARKS = 40.0
-        percentage_list = []
+            try:
+                marks_doc_ref = db.collection('marks').document(class_id).collection('students').document(student_id).collection('subjects').get()
+                for sub_doc in marks_doc_ref:
+                    sub_data = sub_doc.to_dict()
+                    total_obtained = sub_data.get('total')
+                    if total_obtained is not None:
+                        percentage_list.append((float(total_obtained) / MAX_TOTAL_MARKS) * 100)
+                    else:
+                        calc_tot = float(sub_data.get('assignment', 0)) + float(sub_data.get('midterm', 0)) + float(sub_data.get('quiz', 0))
+                        percentage_list.append((calc_tot / MAX_TOTAL_MARKS) * 100)
+            except Exception as e:
+                print(f"Error fetching marks: {e}")
 
-        try:
-            marks_doc_ref = db.collection('marks').document(class_id).collection('students').document(student_id).collection('subjects').get()
-            for sub_doc in marks_doc_ref:
-                sub_data = sub_doc.to_dict()
-                total_obtained = sub_data.get('total')
-                if total_obtained is not None:
-                    percentage_list.append((float(total_obtained) / MAX_TOTAL_MARKS) * 100)
-                else:
-                    calc_tot = float(sub_data.get('assignment', 0)) + float(sub_data.get('midterm', 0)) + float(sub_data.get('quiz', 0))
-                    percentage_list.append((calc_tot / MAX_TOTAL_MARKS) * 100)
-        except Exception as e:
-            print(f"Error fetching marks: {e}")
+            avg_marks = round(sum(percentage_list) / len(percentage_list), 2) if percentage_list else 0
 
-        avg_marks = round(sum(percentage_list) / len(percentage_list), 2) if percentage_list else 0
+            # Attendance calculation
+            total_days = 0
+            present_days = 0
+            try:
+                sub_docs = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').stream()
+                for sub in sub_docs:
+                    att_ref = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').document(sub.id).collection('attendance').stream()
+                    for att_doc in att_ref:
+                        total_days += 1
+                        att_data = att_doc.to_dict()
+                        status = str(att_data.get('status', '')).strip().lower()
+                        if status in ['present', 'p', 'true', '1']:
+                            present_days += 1
+            except Exception as e:
+                print(f"Error fetching attendance: {e}")
 
-        # Attendance calculation
-        total_days = 0
-        present_days = 0
-        try:
-            sub_docs = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').stream()
-            for sub in sub_docs:
-                att_ref = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').document(sub.id).collection('attendance').stream()
-                for att_doc in att_ref:
-                    total_days += 1
-                    att_data = att_doc.to_dict()
-                    status = str(att_data.get('status', '')).strip().lower()
-                    if status in ['present', 'p', 'true', '1']:
-                        present_days += 1
-        except Exception as e:
-            print(f"Error fetching attendance: {e}")
+            attendance_percentage = round((present_days / total_days * 100), 2) if total_days > 0 else 0
 
-        attendance_percentage = round((present_days / total_days * 100), 2) if total_days > 0 else 0
+            return jsonify({
+                "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Attendance: {attendance_percentage}%\n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}"
+            }), 200
 
-        return jsonify({
-            "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Attendance: {attendance_percentage}%\n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}"
-        }), 200
+        # 3. Agar student nahi mila, tab check karein ke kya yeh valid Subject Code ho sakta hai?
+        # Yahan humne ensure kiya hai ke agar length choti bhi ho toh pehle check ho ke kya ye dash (-) rakhta hai ya standard format hai
+        if "-" in query_text or (len(query_text) <= 6 and query_text.isalnum()):
+            try:
+                result = analyze_class_performance(class_id, subject_id=query_text.upper())
+                if result and result.get("class_average") is not None and result.get("class_average") != 0:
+                    top_list = "\n".join([f"• {s}" for s in result.get("top_students_details", [])[:5]])
+                    return jsonify({
+                        "result": f"Analysis for Subject ({query_text.upper()}):\n• Class Average: {result.get('class_average')}%\nTop Students:\n{top_list}"
+                    }), 200
+            except Exception as sub_err:
+                print(f"Not a subject or analysis error: {sub_err}")
+
+        # 4. Agar kuch bhi match na ho
+        return jsonify({"result": f"Student or Subject '{query_text}' not found in class {class_id}."}), 200
 
     except Exception as e:
         print(f"Error in student_query: {str(e)}")
