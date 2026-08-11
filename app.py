@@ -20,7 +20,6 @@ def analyze_class(class_id):
     try:
         raw_subject_id = request.args.get('subject_id')
         
-        # Fast fetch users to find matching class ID
         users_ref = db.collection('users').stream()
         actual_class_id = class_id
         
@@ -31,14 +30,11 @@ def analyze_class(class_id):
                 actual_class_id = db_class
                 break
 
-        # Subject normalization logic if subject is provided
         actual_subject_id = raw_subject_id
         if raw_subject_id and raw_subject_id != "All Subjects":
             sub_stream = db.collection('marks').document(actual_class_id).collection('students').stream()
-            # Find a matching subject across records if needed, or normalize comparison
             found_sub = False
             for s_doc in sub_stream:
-                # check student subjects collection
                 stu_subs = db.collection('marks').document(actual_class_id).collection('students').document(s_doc.id).collection('subjects').stream()
                 for sub_doc in stu_subs:
                     if normalize(sub_doc.id) == normalize(raw_subject_id):
@@ -64,12 +60,18 @@ def student_query():
         if not class_id or not student_query_name:
             return jsonify({"error": "class_id and student_name are required"}), 400
 
+        # --- INVALID TEXT / CASUAL WORDS CHECK ---
+        invalid_keywords = ["hlo", "hello", "hi", "hey", "test", "ok", "yes", "no", "good", "morning", "evening"]
+        if student_query_name in invalid_keywords or len(student_query_name) < 2:
+            return jsonify({
+                "result": "⚠️ Invalid text! Barah-e-karam kisi student ka theek naam type karein ya neechay diye gaye options select karein.\n\n🔄 Click on 'Change Class' below if you want to switch class."
+            }), 200
+
         users_ref = db.collection('users').stream()
         matched_student = None
         student_id = None
         actual_class_id = class_id
 
-        # Fast matching for student and class
         for doc in users_ref:
             user_data = doc.to_dict()
             db_class = user_data.get('classId', '')
@@ -84,7 +86,7 @@ def student_query():
 
         if not matched_student:
             return jsonify({
-                "result": f"Student '{student_query_name}' not found in class {class_id}.\n\n💡 Tip: Click on the 'Change Class' option below to switch your class or check the spelling."
+                "result": f"❌ Invalid text / Student '{student_query_name}' not found in class {class_id}.\n\n💡 Barah-e-karam student ka sahi naam likhein ya neechay 'Change Class' option par click karein."
             }), 200
 
         # Marks Calculation
@@ -109,10 +111,11 @@ def student_query():
         total_days = 0
         present_days = 0
         try:
-            sub_docs = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').stream()
-            for sub in sub_docs:
-                att_ref = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').document(sub.id).collection('attendance').stream()
-                for att_doc in att_ref:
+            subjects_ref = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').stream()
+            for sub_doc in subjects_ref:
+                subject_id = sub_doc.id
+                attendance_ref = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').document(subject_id).collection('attendance').stream()
+                for att_doc in attendance_ref:
                     total_days += 1
                     att_data = att_doc.to_dict()
                     status = str(att_data.get('status', '')).strip().lower()
