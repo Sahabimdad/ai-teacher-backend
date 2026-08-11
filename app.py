@@ -11,11 +11,24 @@ def student_query():
         def normalize(s):
             return str(s).lower().replace(" ", "").replace("_", "").replace("-", "")
 
+        # 1. Pehle check karein ke kya yeh koi Subject Code ho sakta hai?
+        # Agar query mein dashes ya length aisi hai jo subject code lagta hai (jaise di-324l)
+        if "-" in query_text or len(query_text) <= 8:
+            try:
+                result = analyze_class_performance(class_id, subject_id=query_text.upper())
+                if result and result.get("class_average") is not None:
+                    top_list = "\n".join([f"• {s}" for s in result.get("top_students_details", [])[:5]])
+                    return jsonify({
+                        "result": f"Analysis for Subject ({query_text.upper()}):\n• Class Average: {result.get('class_average')}%\nTop Students:\n{top_list}"
+                    }), 200
+            except Exception as sub_err:
+                print(f"Not a subject or analysis error: {sub_err}")
+
+        # 2. Agar subject nahi, toh students mein naam dhoondhein
         users_ref = db.collection('users').get()
         matched_student = None
         student_id = None
 
-        # 1. Pehle check karein ke kya yeh kisi student ka naam hai
         for doc in users_ref:
             user_data = doc.to_dict()
             db_class = user_data.get('classId', '')
@@ -26,24 +39,10 @@ def student_query():
                 student_id = doc.id
                 break
 
-        # 2. Agar student nahi mila, toh check karein ke kya yeh koi Subject Code hai?
         if not matched_student:
-            # Class ke subjects check karein
-            try:
-                subjects_ref = db.collection('marks').document(class_id).collection('students').get()
-                # Agar subject-based query hai, toh analysis_engine ko call kar dein
-                result = analyze_class_performance(class_id, subject_id=query_text.upper())
-                if result and result.get("top_students_details"):
-                    top_list = "\n".join([f"• {s}" for s in result.get("top_students_details", [])[:5]])
-                    return jsonify({
-                        "result": f"Analysis for Subject ({query_text.upper()}) in {class_id}:\n• Class Average: {result.get('class_average')}\nTop Students:\n{top_list}"
-                    }), 200
-            except Exception:
-                pass
-
             return jsonify({"result": f"Student or Subject '{query_text}' not found in class {class_id}."}), 200
 
-        # Agar student mil gaya, toh uske marks aur attendance calculate karein
+        # Student mil gaya, ab marks aur attendance calculate karein
         student_real_name = matched_student.get('name', 'Unknown')
         MAX_TOTAL_MARKS = 40.0
         percentage_list = []
