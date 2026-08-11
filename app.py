@@ -64,7 +64,7 @@ def student_query():
         invalid_keywords = ["hlo", "hello", "hi", "hey", "test", "ok", "yes", "no", "good", "morning", "evening"]
         if student_query_name in invalid_keywords or len(student_query_name) < 2:
             return jsonify({
-                "result": "⚠️ Invalid text! Barah-e-karam kisi student ka theek naam type karein ya neechay diye gaye options select karein.\n\n🔄 Click on 'Change Class' below if you want to switch class."
+                "result": "Invalid text! Barah-e-karam kisi student ka theek naam type karein ya neechay diye gaye options select karein."
             }), 200
 
         users_ref = db.collection('users').stream()
@@ -86,10 +86,10 @@ def student_query():
 
         if not matched_student:
             return jsonify({
-                "result": f"❌ Invalid text / Student '{student_query_name}' not found in class {class_id}.\n\n💡 Barah-e-karam student ka sahi naam likhein ya neechay 'Change Class' option par click karein."
+                "result": f" Invalid text / Student '{student_query_name}' not found in class {class_id}."
             }), 200
 
-        # Marks Calculation
+        # Marks Calculation (Safely supporting single/multiple subjects structure)
         MAX_TOTAL_MARKS = 40.0
         marks_doc_ref = db.collection('marks').document(actual_class_id).collection('students').document(student_id).collection('subjects').stream()
         
@@ -107,28 +107,36 @@ def student_query():
 
         avg_marks = round(total_percentage / sub_count, 2) if sub_count > 0 else 0
 
-        # Attendance Calculation
+        # Attendance Calculation exactly following path: classes/{class_id}/students/{student_id}/subjects/{subject_id}/attendance/{date_doc}
         total_days = 0
         present_days = 0
+                
         try:
-            subjects_ref = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').stream()
-            for sub_doc in subjects_ref:
-                subject_id = sub_doc.id
-                attendance_ref = db.collection('classes').document(actual_class_id).collection('students').document(student_id).collection('subjects').document(subject_id).collection('attendance').stream()
-                for att_doc in attendance_ref:
-                    total_days += 1
-                    att_data = att_doc.to_dict()
-                    status = str(att_data.get('status', '')).strip().lower()
-                    if status in ['present', 'p', 'true', '1']:
-                        present_days += 1
+                    if subject_id and subject_id != "All Subjects":
+                        att_ref = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').document(subject_id).collection('attendance').stream()
+                        for att_doc in att_ref:
+                            total_days += 1
+                            att_data = att_doc.to_dict()
+                            status = str(att_data.get('status', '')).strip().lower()
+                            if status in ['present', 'p', 'true', '1']:
+                                present_days += 1
+                    else:
+                        sub_docs = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').stream()
+                        for sub in sub_docs:
+                            att_ref = db.collection('classes').document(class_id).collection('students').document(student_id).collection('subjects').document(sub.id).collection('attendance').stream()
+                            for att_doc in att_ref:
+                                total_days += 1
+                                att_data = att_doc.to_dict()
+                                status = str(att_data.get('status', '')).strip().lower()
+                                if status in ['present', 'p', 'true', '1']:
+                                    present_days += 1
         except Exception as e:
-            print(f"Error fetching student attendance: {e}")
-
-        attendance_percentage = round((present_days / total_days * 100), 2) if total_days > 0 else 0
-        student_real_name = matched_student.get('name', 'Unknown')
+                    print(f"Error fetching attendance for {name}: {e}")
+        
+        attendance_percentage = (present_days / total_days * 100) if total_days > 0 else 0
 
         return jsonify({
-            "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Attendance: {attendance_percentage}% ({present_days}/{total_days} days)\n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}\n\n🔄 Click on 'Change Class' below if you want to switch class."
+            "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Attendance: {attendance_percentage}% \n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}"
         }), 200
 
     except Exception as e:
