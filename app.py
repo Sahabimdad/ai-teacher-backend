@@ -80,18 +80,26 @@ def student_query():
             sub_count += 1
 
         avg_marks = round(total_percentage / sub_count, 2) if sub_count > 0 else 0
+        
+        # Attendance Fetching Logic
+        attendance_percentage = 0.0
+        try:
+            att_doc = db.collection('attendance').document(class_id).collection('students').document(student_id).get()
+            if att_doc.exists:
+                att_data = att_doc.to_dict()
+                attendance_percentage = float(att_data.get('attendance_percentage', att_data.get('percentage', 0.0)))
+        except Exception:
+            pass
+
         student_real_name = matched_student.get('name', 'Unknown')
 
         return jsonify({
-            "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}"
+            "result": f"Result for {student_real_name}:\n• Average Marks: {avg_marks}%\n• Attendance: {attendance_percentage}%\n• Status: {'Good' if avg_marks >= 50 else 'Needs Improvement'}"
         }), 200
 
     except Exception as e:
         print(f"Error in student_query: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
